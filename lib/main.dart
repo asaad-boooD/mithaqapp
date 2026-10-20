@@ -292,7 +292,8 @@ class _HomeTabState extends State<HomeTab> {
     setState(() => userName = prefs.getString('userName') ?? 'المحامي');
     try {
       final res = await fetchJson(kHomeUrl);
-      if (mounted) setState(() => homeData = res is Map ? res : {});
+      // ✅ تم إصلاح السطر ده
+      if (mounted) setState(() => homeData = res is Map ? Map<String, dynamic>.from(res) : {});
     } catch (_) {}
   }
 
@@ -578,7 +579,8 @@ class _ExamsTabState extends State<ExamsTab> {
   Future<void> _fetchQuestions() async {
     setState(() => loading = true);
     try {
-      final res = await fetchJson('$kJsonBasequestions.json');
+      // ✅ تم إصلاح السطر ده
+      final res = await fetchJson('${kJsonBase}questions.json');
       if (mounted) {
         setState(() {
           questions = res is List ? res : [];
