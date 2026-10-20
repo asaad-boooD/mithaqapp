@@ -41,27 +41,27 @@ jobs:
           curl -L -o assets/icon.png "https://cdn-icons-png.flaticon.com/512/1048/1048953.png"
           dart run flutter_launcher_icons
 
-      - name: Generate Keystore (توقيع التطبيق)
+      - name: Generate Keystore
         run: |
-          keytool -genkey -v -keystore release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias mithaq -storepass mithaq123 -keypass mithaq123 -dname "CN=Mithaq, OU=Dev, O=Mithaq, L=Gaza, S=Gaza, C=PS"
+          keytool -genkey -v -keystore android/app/release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias mithaq -storepass mithaq123 -keypass mithaq123 -dname "CN=Mithaq, OU=Dev, O=Mithaq, L=Gaza, S=Gaza, C=PS"
           echo "storePassword=mithaq123" > android/key.properties
           echo "keyPassword=mithaq123" >> android/key.properties
           echo "keyAlias=mithaq" >> android/key.properties
-          echo "storeFile=../release.jks" >> android/key.properties
+          echo "storeFile=release.jks" >> android/key.properties
 
-      - name: Patch Gradle for Signing
+      - name: Patch Gradle for Signing and NDK
         run: |
           python3 -c "
           import re
           with open('android/app/build.gradle.kts', 'r') as f: content = f.read()
 
-          # إضافة استيراد الخصائص داخل ملف Kotlin DSL
+          # 1. إضافة الاستيراد في أعلى الملف
           content = content.replace('plugins {', 'import java.util.Properties\nimport java.io.FileInputStream\n\nval keystoreProperties = Properties()\nval keystorePropertiesFile = rootProject.file(\"key.properties\")\nif (keystorePropertiesFile.exists()) {\n    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n}\n\nplugins {')
 
-          # إضافة إعدادات التوقيع
-          content = content.replace('android {', 'android {\n    signingConfigs {\n        create(\"release\") {\n            keyAlias = keystoreProperties[\"keyAlias\"] as String\n            keyPassword = keystoreProperties[\"keyPassword\"] as String\n            storeFile = keystoreProperties[\"storeFile\"]?.let { file(it) }\n            storePassword = keystoreProperties[\"storePassword\"] as String\n        }\n    }')
+          # 2. إضافة إعدادات التوقيع وتحديث إصدار NDK لتجنب التحذيرات
+          content = content.replace('android {', 'android {\n    ndkVersion = \"27.0.12077973\"\n    signingConfigs {\n        create(\"release\") {\n            keyAlias = keystoreProperties[\"keyAlias\"] as String\n            keyPassword = keystoreProperties[\"keyPassword\"] as String\n            storeFile = keystoreProperties[\"storeFile\"]?.let { file(it) }\n            storePassword = keystoreProperties[\"storePassword\"] as String\n        }\n    }')
 
-          # ربط التوقيع بإصدار الـ release
+          # 3. ربط التوقيع بإصدار الـ release
           content = content.replace('signingConfig = signingConfigs.getByName(\"debug\")', 'signingConfig = signingConfigs.getByName(\"release\")')
 
           with open('android/app/build.gradle.kts', 'w') as f: f.write(content)
