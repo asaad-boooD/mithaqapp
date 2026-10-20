@@ -6,6 +6,7 @@ import 'package:flutter_html/flutter_html.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,7 +14,9 @@ void main() async {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
   ));
-  runApp(const MithaqApp());
+  final prefs = await SharedPreferences.getInstance();
+  bool isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+  runApp(MithaqApp(initialLoggedIn: isLoggedIn));
 }
 
 // ============ الألوان ============
@@ -29,6 +32,8 @@ const Color cBorder = Color(0xFFE8E1D5);
 // ============ الروابط ============
 const String kBase = 'https://mithaqps.site.je';
 const String kChatUrl = '$kBase/wp-json/fllm/v1/chat';
+const String kHomeUrl = '$kBase/wp-json/mithaq/v1/home-data';
+const String kLoginUrl = '$kBase/wp-json/mithaq/v1/login';
 const String kJsonBase = '$kBase/wp-content/themes/mithaq-theme/inc/seed-json/';
 
 TextStyle amiri({double s = 22, Color c = cPrimary, FontWeight w = FontWeight.w700}) =>
@@ -53,19 +58,27 @@ Future<dynamic> fetchJson(String url, {bool isPost = false, Map<String, dynamic>
     request.headers.set('Accept', 'application/json');
     final response = await request.close().timeout(const Duration(seconds: 30));
     final responseBody = await response.transform(utf8.decoder).join();
+    
     if (response.statusCode == 200) {
       return jsonDecode(responseBody);
     } else {
-      throw Exception('خطأ: ${response.statusCode}');
+      try {
+        final err = jsonDecode(responseBody);
+        throw Exception(err['message'] ?? 'خطأ: ${response.statusCode}');
+      } catch (_) {
+        throw Exception('خطأ: ${response.statusCode}');
+      }
     }
   } finally {
     client.close();
   }
 }
 
-// ==================== التطبيق ====================
+// ==================== التطبيق الأساسي ====================
 class MithaqApp extends StatelessWidget {
-  const MithaqApp({super.key});
+  final bool initialLoggedIn;
+  const MithaqApp({super.key, required this.initialLoggedIn});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -78,11 +91,138 @@ class MithaqApp extends StatelessWidget {
       ),
       locale: const Locale('ar', 'PS'),
       builder: (context, child) => Directionality(textDirection: TextDirection.rtl, child: child ?? const SizedBox.shrink()),
-      home: const MainScreen(),
+      home: initialLoggedIn ? const MainScreen() : const LoginScreen(),
     );
   }
 }
 
+// ==================== شاشة تسجيل الدخول ====================
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _userController = TextEditingController();
+  final _passController = TextEditingController();
+  bool isLoading = false;
+  String? errorMsg;
+
+  Future<void> _login() async {
+    final user = _userController.text.trim();
+    final pass = _passController.text.trim();
+    if (user.isEmpty || pass.isEmpty) {
+      setState(() => errorMsg = 'يرجى إدخال اسم المستخدم وكلمة المرور');
+      return;
+    }
+
+    setState(() { isLoading = true; errorMsg = null; });
+
+    try {
+      final res = await fetchJson(kLoginUrl, isPost: true, body: {
+        'username': user,
+        'password': pass,
+      });
+
+      if (res['success'] == true) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isLoggedIn', true);
+        await prefs.setString('userName', res['name'] ?? user);
+        await prefs.setInt('userId', res['user_id'] ?? 0);
+        
+        if (mounted) {
+          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainScreen()));
+        }
+      } else {
+        setState(() => errorMsg = 'اسم المستخدم أو كلمة المرور غير صحيحة');
+      }
+    } catch (e) {
+      setState(() => errorMsg = e.toString().replaceAll('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(30),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const SizedBox(height: 60),
+              const FaIcon(FontAwesomeIcons.scaleBalanced, size: 80, color: cPrimary),
+              const SizedBox(height: 20),
+              Text('مِيثَاق', style: amiri(s: 40)),
+              const SizedBox(height: 10),
+              Text('منصة المحامي الفلسطيني', style: cairo(s: 16, c: cTextSoft)),
+              const SizedBox(height: 40),
+              
+              if (errorMsg != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.red.shade200)),
+                  child: Text(errorMsg!, style: cairo(s: 14, c: Colors.red)),
+                ),
+                const SizedBox(height: 20),
+              ],
+
+              TextField(
+                controller: _userController,
+                decoration: InputDecoration(
+                  labelText: 'اسم المستخدم',
+                  labelStyle: cairo(s: 14, c: cTextSoft),
+                  filled: true,
+                  fillColor: Colors.white,
+                  prefixIcon: const Icon(Icons.person, color: cPrimary),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cBorder)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cBorder)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cPrimary)),
+                ),
+              ),
+              const SizedBox(height: 15),
+              TextField(
+                controller: _passController,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'كلمة المرور',
+                  labelStyle: cairo(s: 14, c: cTextSoft),
+                  filled: true,
+                  fillColor: Colors.white,
+                  prefixIcon: const Icon(Icons.lock, color: cPrimary),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cBorder)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cBorder)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cPrimary)),
+                ),
+              ),
+              const SizedBox(height: 30),
+              
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: cPrimary,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  ),
+                  onPressed: isLoading ? null : _login,
+                  child: isLoading 
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : Text('دخول', style: cairo(s: 16, c: Colors.white, w: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ==================== الشاشة الرئيسية (Bottom Nav) ====================
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
   @override
@@ -91,7 +231,6 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
-  
   final List<Widget> _tabs = [
     const HomeTab(),
     const LibraryTab(),
@@ -139,7 +278,8 @@ class HomeTab extends StatefulWidget {
 }
 
 class _HomeTabState extends State<HomeTab> {
-  bool loading = true;
+  Map<String, dynamic>? homeData;
+  String userName = 'المحامي';
 
   @override
   void initState() {
@@ -148,12 +288,12 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() => userName = prefs.getString('userName') ?? 'المحامي');
     try {
-      await fetchJson('$kBase/wp-json/mithaq/v1/home-data');
-      if (mounted) setState(() => loading = false);
-    } catch (_) {
-      if (mounted) setState(() => loading = false);
-    }
+      final res = await fetchJson(kHomeUrl);
+      if (mounted) setState(() => homeData = res is Map ? res : {});
+    } catch (_) {}
   }
 
   @override
@@ -165,99 +305,47 @@ class _HomeTabState extends State<HomeTab> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            // Header
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('مرحباً بك', style: cairo(s: 14, c: cTextSoft)),
-                    Text('مِيثَاق', style: amiri(s: 28, c: cPrimary)),
+                    Text('مرحباً بك،', style: cairo(s: 14, c: cTextSoft)),
+                    Text(userName, style: amiri(s: 24, c: cPrimary)),
                   ],
                 ),
-                const CircleAvatar(
-                  radius: 24,
-                  backgroundColor: cBgAlt,
-                  child: FaIcon(FontAwesomeIcons.scaleBalanced, color: cPrimary, size: 20),
-                ),
+                const CircleAvatar(radius: 24, backgroundColor: cBgAlt, child: FaIcon(FontAwesomeIcons.scaleBalanced, color: cPrimary, size: 20)),
               ],
             ),
             const SizedBox(height: 25),
-
-            // Search Bar
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: cBorder),
-              ),
-              child: TextField(
-                decoration: InputDecoration(
-                  hintText: 'ابحث عن قانون أو سؤال...',
-                  hintStyle: cairo(s: 14, c: cTextSoft),
-                  border: InputBorder.none,
-                  icon: const Icon(Icons.search, color: cTextSoft),
-                ),
-              ),
-            ),
-            const SizedBox(height: 25),
-
-            // Daily Question
             Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [cPrimary, cPrimaryLight]),
-                borderRadius: BorderRadius.circular(20),
-              ),
+              decoration: BoxDecoration(gradient: const LinearGradient(colors: [cPrimary, cPrimaryLight]), borderRadius: BorderRadius.circular(20)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.lightbulb, color: cGold, size: 20),
-                      const SizedBox(width: 8),
-                      Text('سؤال اليوم', style: cairo(s: 14, c: Colors.white, w: FontWeight.bold)),
-                    ],
-                  ),
+                  Row(children: [
+                    const Icon(Icons.lightbulb, color: cGold, size: 20),
+                    const SizedBox(width: 8),
+                    Text('سؤال اليوم', style: cairo(s: 14, c: Colors.white, w: FontWeight.bold)),
+                  ]),
                   const SizedBox(height: 15),
-                  Text('ما هو الأثر القانوني لتقديم طلب تجديد الدعوى المشطوبة بعد مرور ستين يوماً؟', 
-                    style: amiri(s: 18, c: Colors.white), maxLines: 2, overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 15),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
-                      child: Text('اعرف الجواب', style: cairo(s: 12, c: Colors.white, w: FontWeight.bold)),
-                    ),
+                  Text(
+                    homeData?['daily_question']?['title']?.toString().replaceAll(RegExp(r'<[^>]*>'), '') ?? 'ما هو الأثر القانوني لتقديم طلب تجديد الدعوى المشطوبة بعد مرور ستين يوماً؟', 
+                    style: amiri(s: 18, c: Colors.white), maxLines: 3, overflow: TextOverflow.ellipsis
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 30),
-
-            // Stats
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _buildStat('9', 'قانون'),
-                _buildStat('141', 'سؤال'),
-                _buildStat('67', 'نموذج'),
-                _buildStat('22', 'إجراء'),
-              ],
-            ),
-            const SizedBox(height: 30),
-
-            // Quick Actions
-            Text('وصول سريع', style: amiri(s: 20)),
-            const SizedBox(height: 15),
-            Row(
-              children: [
-                Expanded(child: _buildActionCard(Icons.menu_book, 'المكتبة', cPrimary)),
-                const SizedBox(width: 15),
-                Expanded(child: _buildActionCard(Icons.assignment, 'الاختبارات', cGold)),
+                _buildStat(homeData?['stats']?['laws']?.toString() ?? '9', 'قانون'),
+                _buildStat(homeData?['stats']?['questions']?.toString() ?? '141', 'سؤال'),
+                _buildStat(homeData?['stats']?['templates']?.toString() ?? '67', 'نموذج'),
+                _buildStat(homeData?['stats']?['procedures']?.toString() ?? '22', 'إجراء'),
               ],
             ),
           ],
@@ -267,30 +355,7 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Widget _buildStat(String num, String label) {
-    return Column(
-      children: [
-        Text(num, style: amiri(s: 24, c: cPrimary)),
-        Text(label, style: cairo(s: 12, c: cTextSoft)),
-      ],
-    );
-  }
-
-  Widget _buildActionCard(IconData icon, String title, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: cBorder),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 30),
-          const SizedBox(height: 10),
-          Text(title, style: cairo(s: 14, w: FontWeight.bold)),
-        ],
-      ),
-    );
+    return Column(children: [Text(num, style: amiri(s: 24, c: cPrimary)), Text(label, style: cairo(s: 12, c: cTextSoft))]);
   }
 }
 
@@ -302,36 +367,66 @@ class LibraryTab extends StatefulWidget {
 }
 
 class _LibraryTabState extends State<LibraryTab> {
-  String _currentFile = 'laws.json';
+  String _currentType = 'laws.json';
   bool loading = true;
   List<dynamic> items = [];
 
   final List<Map<String, String>> _categories = [
-    {'file': 'laws.json', 'title': 'القوانين'},
-    {'file': 'questions.json', 'title': 'الأسئلة'},
-    {'file': 'court-cases.json', 'title': 'السوابق'},
-    {'file': 'templates.json', 'title': 'النماذج'},
+    {'type': 'laws.json', 'title': 'القوانين'},
+    {'type': 'questions.json', 'title': 'الأسئلة'},
+    {'type': 'books', 'title': 'الكتب القانونية'},
+    {'type': 'procedures.json', 'title': 'الإجراءات'},
+    {'type': 'templates.json', 'title': 'النماذج'},
+    {'type': 'courts.json', 'title': 'المحاكم'},
+    {'type': 'court-cases.json', 'title': 'السوابق'},
+    {'type': 'guides.json', 'title': 'دليل المتدرب'},
+    {'type': 'research.json', 'title': 'البحث القانوني'},
+    {'type': 'oral-exam.json', 'title': 'الشفوي'},
+    {'type': 'sharia-questions.json', 'title': 'الشرعية'},
   ];
 
   @override
   void initState() {
     super.initState();
-    _loadFile(_currentFile);
+    _loadData();
   }
 
-  Future<void> _loadFile(String fileName) async {
+  Future<void> _loadData() async {
     setState(() { loading = true; items = []; });
     try {
-      final res = await fetchJson('$kJsonBase$fileName');
-      if (mounted) {
-        setState(() {
-          items = res is List ? res : [];
-          loading = false;
-        });
+      if (_currentType == 'books') {
+        final res = await fetchJson('$kBase/wp-json/wp/v2/legal_book?per_page=50');
+        if (mounted) {
+          setState(() {
+            items = res is List ? res : [];
+            loading = false;
+          });
+        }
+      } else {
+        final res = await fetchJson('$kJsonBase$_currentType');
+        if (mounted) {
+          setState(() {
+            items = res is List ? res : [];
+            loading = false;
+          });
+        }
       }
     } catch (e) {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  String _getTitle(dynamic item) {
+    if (item == null) return 'بدون عنوان';
+    if (item is String) return item;
+    String title = item['title']?['rendered'] ?? item['title'] ?? item['question'] ?? item['name'] ?? 'بدون عنوان';
+    return title.toString().replaceAll(RegExp(r'<[^>]*>'), '');
+  }
+
+  String _getContent(dynamic item) {
+    if (item == null) return '';
+    String content = item['content']?['rendered'] ?? item['content'] ?? item['answer'] ?? item['explanation'] ?? item['description'] ?? '';
+    return content.toString();
   }
 
   @override
@@ -343,20 +438,19 @@ class _LibraryTabState extends State<LibraryTab> {
             padding: const EdgeInsets.all(20),
             child: Text('المكتبة القانونية', style: amiri(s: 24)),
           ),
-          // Tabs
           SizedBox(
-            height: 40,
+            height: 45,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 15),
               itemCount: _categories.length,
               itemBuilder: (context, index) {
                 final cat = _categories[index];
-                final isSelected = _currentFile == cat['file'];
+                final isSelected = _currentType == cat['type'];
                 return GestureDetector(
                   onTap: () {
-                    setState(() { _currentFile = cat['file']!; });
-                    _loadFile(_currentFile);
+                    setState(() => _currentType = cat['type']!);
+                    _loadData();
                   },
                   child: Container(
                     margin: const EdgeInsets.only(left: 10),
@@ -373,44 +467,38 @@ class _LibraryTabState extends State<LibraryTab> {
               },
             ),
           ),
-          const SizedBox(height: 20),
-
-          // List
+          const SizedBox(height: 15),
           Expanded(
             child: loading
                 ? const Center(child: CircularProgressIndicator(color: cPrimary))
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    itemCount: items.length,
-                    itemBuilder: (context, index) {
-                      final item = items[index];
-                      final title = item['title'] ?? item['question'] ?? item['name'] ?? 'بدون عنوان';
-                      final content = item['content'] ?? item['answer'] ?? item['explanation'] ?? item['description'] ?? '';
+                : items.isEmpty
+                    ? Center(child: Text('لا توجد بيانات حالياً', style: cairo(c: cTextSoft)))
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        itemCount: items.length,
+                        itemBuilder: (context, index) {
+                          final item = items[index];
+                          final title = _getTitle(item);
+                          final content = _getContent(item);
 
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(15),
-                          border: Border.all(color: cBorder),
-                        ),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.all(15),
-                          title: Text(title, style: amiri(s: 16), maxLines: 2, overflow: TextOverflow.ellipsis),
-                          subtitle: content.isNotEmpty 
-                              ? Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Text(content, style: cairo(s: 12, c: cTextSoft), maxLines: 2, overflow: TextOverflow.ellipsis),
-                                )
-                              : null,
-                          trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: cTextSoft),
-                          onTap: () {
-                            Navigator.push(context, MaterialPageRoute(builder: (_) => DetailScreen(title: title, content: content)));
-                          },
-                        ),
-                      );
-                    },
-                  ),
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: cBorder)),
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.all(15),
+                              title: Text(title, style: amiri(s: 16), maxLines: 2, overflow: TextOverflow.ellipsis),
+                              subtitle: content.isNotEmpty 
+                                  ? Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: Text(content.replaceAll(RegExp(r'<[^>]*>'), ''), style: cairo(s: 12, c: cTextSoft), maxLines: 2, overflow: TextOverflow.ellipsis),
+                                    )
+                                  : null,
+                              trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: cTextSoft),
+                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DetailScreen(title: title, content: content, isBook: _currentType == 'books'))),
+                            ),
+                          );
+                        },
+                      ),
           ),
         ],
       ),
@@ -421,10 +509,18 @@ class _LibraryTabState extends State<LibraryTab> {
 class DetailScreen extends StatelessWidget {
   final String title;
   final String content;
-  const DetailScreen({super.key, required this.title, required this.content});
+  final bool isBook;
+  const DetailScreen({super.key, required this.title, required this.content, this.isBook = false});
 
   @override
   Widget build(BuildContext context) {
+    String? pdfUrl;
+    if (isBook) {
+      final regex = RegExp(r'href="([^"]+\.pdf)"');
+      final match = regex.firstMatch(content);
+      if (match != null) pdfUrl = match.group(1);
+    }
+
     return Scaffold(
       appBar: AppBar(title: Text('التفاصيل', style: amiri(s: 18)), backgroundColor: cBg, iconTheme: const IconThemeData(color: cPrimary)),
       body: SingleChildScrollView(
@@ -434,11 +530,21 @@ class DetailScreen extends StatelessWidget {
           children: [
             Text(title, style: amiri(s: 22, c: cPrimary)),
             const Divider(height: 30),
+            if (pdfUrl != null) ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: cPrimary, padding: const EdgeInsets.all(15)),
+                  icon: const Icon(Icons.download, color: Colors.white),
+                  label: Text('تحميل أو قراءة الكتاب (PDF)', style: cairo(s: 16, c: Colors.white)),
+                  onPressed: () => launchUrl(Uri.parse(pdfUrl!)),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
             Html(
               data: content.isEmpty ? '<p>لا يوجد محتوى</p>' : content,
-              style: {
-                "body": Style(fontFamily: GoogleFonts.cairo().fontFamily, fontSize: FontSize(15), lineHeight: const LineHeight(1.8), color: cText),
-              },
+              style: {"body": Style(fontFamily: GoogleFonts.cairo().fontFamily, fontSize: FontSize(15), lineHeight: const LineHeight(1.8), color: cText)},
             ),
           ],
         ),
@@ -455,34 +561,123 @@ class ExamsTab extends StatefulWidget {
 }
 
 class _ExamsTabState extends State<ExamsTab> {
+  bool loading = true;
+  List<dynamic> questions = [];
+  int currentIndex = 0;
+  int score = 0;
+  bool answered = false;
+  String? selectedOption;
+  bool examFinished = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchQuestions();
+  }
+
+  Future<void> _fetchQuestions() async {
+    setState(() => loading = true);
+    try {
+      final res = await fetchJson('$kJsonBasequestions.json');
+      if (mounted) {
+        setState(() {
+          questions = res is List ? res : [];
+          loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  void _checkAnswer(String option) {
+    if (answered) return;
+    setState(() {
+      selectedOption = option;
+      answered = true;
+      if (option == 'أ') score++;
+    });
+  }
+
+  void _nextQuestion() {
+    if (currentIndex < questions.length - 1) {
+      setState(() { currentIndex++; answered = false; selectedOption = null; });
+    } else {
+      setState(() => examFinished = true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Center(
+    if (loading) return const Center(child: CircularProgressIndicator(color: cPrimary));
+    if (questions.isEmpty) return Center(child: Text('لا توجد أسئلة متاحة حالياً', style: cairo()));
+
+    if (examFinished) {
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              padding: const EdgeInsets.all(30),
-              decoration: const BoxDecoration(color: cBgAlt, shape: BoxShape.circle),
-              child: const Icon(Icons.assignment, size: 60, color: cPrimary),
-            ),
+            Text('النتيجة النهائية', style: amiri(s: 24)),
             const SizedBox(height: 20),
-            Text('الاختبارات التجريبية', style: amiri(s: 24)),
-            const SizedBox(height: 10),
-            Text('هنا ستتمكن من خوض اختبارات تفاعلية\nلقياس مستواك القانوني', textAlign: TextAlign.center, style: cairo(s: 14, c: cTextSoft)),
+            Text('$score / ${questions.length}', style: amiri(s: 40, c: cPrimary)),
             const SizedBox(height: 30),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: cPrimary,
-                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-              ),
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('قريباً...', style: cairo(c: Colors.white)), backgroundColor: cPrimary));
-              },
-              child: Text('ابدأ الاختبار الآن', style: cairo(s: 16, c: Colors.white, w: FontWeight.bold)),
-            ),
+              onPressed: () => setState(() { currentIndex = 0; score = 0; answered = false; examFinished = false; }),
+              style: ElevatedButton.styleFrom(backgroundColor: cPrimary),
+              child: Text('إعادة الاختبار', style: cairo(c: Colors.white)),
+            )
+          ],
+        ),
+      );
+    }
+
+    final q = questions[currentIndex];
+    final title = q['title'] ?? q['question'] ?? '';
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('السؤال ${currentIndex + 1} من ${questions.length}', style: cairo(s: 14, c: cTextSoft)),
+            const SizedBox(height: 10),
+            LinearProgressIndicator(value: (currentIndex + 1) / questions.length, backgroundColor: cBgAlt, color: cPrimary),
+            const SizedBox(height: 30),
+            Text(title, style: amiri(s: 20)),
+            const SizedBox(height: 30),
+            ...['أ', 'ب', 'ج', 'د'].map((opt) {
+              bool isCorrect = opt == 'أ';
+              Color color = Colors.white;
+              if (answered) {
+                if (opt == selectedOption) color = isCorrect ? Colors.green.shade100 : Colors.red.shade100;
+                if (isCorrect) color = Colors.green.shade100;
+              }
+              return GestureDetector(
+                onTap: () => _checkAnswer(opt),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 15),
+                  padding: const EdgeInsets.all(15),
+                  decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(15), border: Border.all(color: answered && opt == selectedOption ? cPrimary : cBorder)),
+                  child: Row(children: [
+                    CircleAvatar(radius: 15, backgroundColor: cBgAlt, child: Text(opt, style: cairo(w: FontWeight.bold))),
+                    const SizedBox(width: 15),
+                    Text('الخيار $opt (نص تجريبي)', style: cairo(s: 16)),
+                  ]),
+                ),
+              );
+            }).toList(),
+            const Spacer(),
+            if (answered)
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _nextQuestion,
+                  style: ElevatedButton.styleFrom(backgroundColor: cPrimary),
+                  child: Text('السؤال التالي', style: cairo(c: Colors.white)),
+                ),
+              )
           ],
         ),
       ),
@@ -506,28 +701,18 @@ class _ChatTabState extends State<ChatTab> {
   Future<void> _send() async {
     final text = controller.text.trim();
     if (text.isEmpty || sending) return;
-    setState(() {
-      messages.add({'text': text, 'isUser': true});
-      controller.clear();
-      sending = true;
-    });
+    setState(() { messages.add({'text': text, 'isUser': true}); controller.clear(); sending = true; });
     _scrollToBottom();
 
     try {
       final res = await fetchJson(kChatUrl, isPost: true, body: {'message': text, 'prompt': text});
       if (mounted) {
         String reply = res['reply']?.toString() ?? res['response']?.toString() ?? res['message']?.toString() ?? 'عذراً، لم أستلم رداً.';
-        setState(() {
-          messages.add({'text': reply, 'isUser': false});
-          sending = false;
-        });
+        setState(() { messages.add({'text': reply, 'isUser': false}); sending = false; });
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          messages.add({'text': 'تعذر الاتصال بالخادم.', 'isUser': false});
-          sending = false;
-        });
+        setState(() { messages.add({'text': 'تعذر الاتصال بالخادم. تأكد من صلاحية الإنترنت.', 'isUser': false}); sending = false; });
       }
     }
     _scrollToBottom();
@@ -535,9 +720,7 @@ class _ChatTabState extends State<ChatTab> {
 
   void _scrollToBottom() {
     Future.delayed(const Duration(milliseconds: 100), () {
-      if (scrollController.hasClients) {
-        scrollController.animateTo(scrollController.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-      }
+      if (scrollController.hasClients) scrollController.animateTo(scrollController.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
     });
   }
 
@@ -553,13 +736,10 @@ class _ChatTabState extends State<ChatTab> {
               children: [
                 const CircleAvatar(backgroundColor: cPrimary, child: Icon(Icons.smart_toy, color: Colors.white, size: 20)),
                 const SizedBox(width: 15),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('المستشار الذكي', style: amiri(s: 18)),
-                    Text('ميثاق AI', style: cairo(s: 12, c: cPrimary)),
-                  ],
-                ),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('المستشار الذكي', style: amiri(s: 18)),
+                  Text('ميثاق AI', style: cairo(s: 12, c: cPrimary)),
+                ]),
               ],
             ),
           ),
@@ -638,23 +818,25 @@ class ProfileTab extends StatefulWidget {
 }
 
 class _ProfileTabState extends State<ProfileTab> {
-  bool isLoggedIn = false;
+  String userName = 'المحامي المتدرب';
 
   @override
   void initState() {
     super.initState();
-    _checkLogin();
+    _loadName();
   }
 
-  Future<void> _checkLogin() async {
+  Future<void> _loadName() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() => isLoggedIn = prefs.getBool('isLoggedIn') ?? false);
+    setState(() => userName = prefs.getString('userName') ?? 'المحامي المتدرب');
   }
 
-  Future<void> _login() async {
+  Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isLoggedIn', true);
-    setState(() => isLoggedIn = true);
+    await prefs.setBool('isLoggedIn', false);
+    if (mounted) {
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+    }
   }
 
   @override
@@ -669,26 +851,23 @@ class _ProfileTabState extends State<ProfileTab> {
               children: [
                 const CircleAvatar(radius: 40, backgroundColor: cBgAlt, child: Icon(Icons.person, size: 40, color: cPrimary)),
                 const SizedBox(height: 15),
-                Text(isLoggedIn ? 'المحامي المتدرب' : 'زائر', style: amiri(s: 22)),
+                Text(userName, style: amiri(s: 22)),
                 const SizedBox(height: 5),
-                Text(isLoggedIn ? 'تجربة مجانية (متبقي 30 يوم)' : 'يرجى تسجيل الدخول', style: cairo(s: 14, c: cTextSoft)),
-                if (!isLoggedIn) ...[
-                  const SizedBox(height: 15),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: cPrimary, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
-                    onPressed: _login,
-                    child: Text('تسجيل الدخول', style: cairo(c: Colors.white)),
-                  ),
-                ]
+                Text('عضو مسجل', style: cairo(s: 14, c: cTextSoft)),
               ],
             ),
           ),
           const SizedBox(height: 30),
           const Divider(),
-          _buildTile(Icons.info_outline, 'عن ميثاق', () => _showAboutDialog(context)),
-          _buildTile(Icons.developer_mode, 'المطور', () => _showDevDialog(context)),
-          // تم حذف شكر وتقدير بناءً على طلبك
-          _buildTile(Icons.privacy_tip_outlined, 'إخلاء المسؤولية', () => _showDisclaimerDialog(context)),
+          _buildTile(Icons.info_outline, 'عن ميثاق', () => _showDialog(context, 'عن ميثاق', 'منصة المحامي الفلسطيني — رحلتك تبدأ من هنا.')),
+          _buildTile(Icons.developer_mode, 'المطور', () => _showDialog(context, 'المطور', 'المحامي أسعد محمد بدوي\nsmilestranger2@gmail.com')),
+          _buildTile(Icons.privacy_tip_outlined, 'إخلاء المسؤولية', () => _showDialog(context, 'إخلاء المسؤولية', 'المنصة لأغراض تعليمية فقط، ولا تعتبر استشارة قانونية.')),
+          const SizedBox(height: 20),
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.red),
+            title: Text('تسجيل الخروج', style: cairo(s: 16, c: Colors.red)),
+            onTap: _logout,
+          ),
         ],
       ),
     );
@@ -703,26 +882,10 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
-  void _showAboutDialog(BuildContext context) {
+  void _showDialog(BuildContext context, String title, String content) {
     showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: Text('عن ميثاق', style: amiri(s: 20)),
-      content: Text('منصة المحامي الفلسطيني — رحلتك تبدأ من هنا. تهدف المنصة إلى تقديم محتوى قانوني وأدوات تفاعلية للمحامي المتدرب.', style: cairo(s: 14)),
-      actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('حسناً'))],
-    ));
-  }
-
-  void _showDevDialog(BuildContext context) {
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: Text('المطور', style: amiri(s: 20)),
-      content: Text('صُمم وطُوّر بعناية\nالمحامي أسعد محمد بدوي\n\nللاستفسار: smilestranger2@gmail.com', style: cairo(s: 14), textAlign: TextAlign.center),
-      actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('حسناً'))],
-    ));
-  }
-
-  void _showDisclaimerDialog(BuildContext context) {
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: Text('إخلاء المسؤولية', style: amiri(s: 20)),
-      content: Text('المنصة لأغراض تعليمية فقط، ولا تعتبر استشارة قانونية. يجب مراجعة النصوص القانونية قبل اتخاذ أي إجراء.', style: cairo(s: 14)),
+      title: Text(title, style: amiri(s: 20)),
+      content: Text(content, style: cairo(s: 14), textAlign: TextAlign.center),
       actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('حسناً'))],
     ));
   }
