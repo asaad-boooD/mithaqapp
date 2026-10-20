@@ -31,22 +31,15 @@ jobs:
       - name: Generate Android Files
         run: flutter create . --platforms=android --project-name mithaq
 
-      - name: Fix Internet Permission (صلاحية النت)
+      - name: Fix Internet Permission
         run: |
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
 
-      - name: Add App Logo (إضافة الشعار تلقائياً)
+      - name: Add App Logo (الشعار الرسمي)
         run: |
           mkdir -p assets
-          # تحميل شعار ميزان العدالة
           curl -L -o assets/icon.png "https://cdn-icons-png.flaticon.com/512/1048/1048953.png"
-          # استخدام أداة ImageMagick لتوليد جميع مقاسات الأيقونات لهواتف الأندرويد
-          sudo apt-get install -y imagemagick
-          convert assets/icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-          convert assets/icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-          convert assets/icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
-          convert assets/icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-          convert assets/icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          dart run flutter_launcher_icons
 
       - name: Generate Keystore (توقيع التطبيق)
         run: |
@@ -56,19 +49,26 @@ jobs:
           echo "keyAlias=mithaq" >> android/key.properties
           echo "storeFile=../release.jks" >> android/key.properties
 
-      - name: Patch Gradle for Signing (تجهيز ملفات البناء)
+      - name: Patch Gradle for Signing
         run: |
           python3 -c "
           import re
           with open('android/app/build.gradle.kts', 'r') as f: content = f.read()
-          content = content.replace('android {', 'import java.util.Properties\nimport java.io.FileInputStream\n\nval keystoreProperties = Properties()\nval keystorePropertiesFile = rootProject.file(\"key.properties\")\nif (keystorePropertiesFile.exists()) {\n    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n}\n\nandroid {', 1)
-          content = content.replace('buildTypes {', 'signingConfigs {\n        create(\"release\") {\n            keyAlias = keystoreProperties[\"keyAlias\"] as String\n            keyPassword = keystoreProperties[\"keyPassword\"] as String\n            storeFile = keystoreProperties[\"storeFile\"]?.let { file(it) }\n            storePassword = keystoreProperties[\"storePassword\"] as String\n        }\n    }\n    buildTypes {', 1)
-          content = content.replace('getByName(\"release\") {', 'getByName(\"release\") {\n                signingConfig = signingConfigs.getByName(\"release\")', 1)
+
+          # إضافة استيراد الخصائص داخل ملف Kotlin DSL
+          content = content.replace('plugins {', 'import java.util.Properties\nimport java.io.FileInputStream\n\nval keystoreProperties = Properties()\nval keystorePropertiesFile = rootProject.file(\"key.properties\")\nif (keystorePropertiesFile.exists()) {\n    keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n}\n\nplugins {')
+
+          # إضافة إعدادات التوقيع
+          content = content.replace('android {', 'android {\n    signingConfigs {\n        create(\"release\") {\n            keyAlias = keystoreProperties[\"keyAlias\"] as String\n            keyPassword = keystoreProperties[\"keyPassword\"] as String\n            storeFile = keystoreProperties[\"storeFile\"]?.let { file(it) }\n            storePassword = keystoreProperties[\"storePassword\"] as String\n        }\n    }')
+
+          # ربط التوقيع بإصدار الـ release
+          content = content.replace('signingConfig = signingConfigs.getByName(\"debug\")', 'signingConfig = signingConfigs.getByName(\"release\")')
+
           with open('android/app/build.gradle.kts', 'w') as f: f.write(content)
           "
 
       - name: Build Signed APK
-        run: flutter build apk --release
+        run: flutter build apk --release --obfuscate --split-debug-info=debug_info
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
