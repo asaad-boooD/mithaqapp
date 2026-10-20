@@ -14,9 +14,7 @@ void main() async {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
   ));
-  final prefs = await SharedPreferences.getInstance();
-  bool isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
-  runApp(MithaqApp(initialLoggedIn: isLoggedIn));
+  runApp(const MithaqApp(initialLoggedIn: true)); // تخطي تسجيل الدخول مؤقتاً
 }
 
 // ============ الألوان ============
@@ -33,8 +31,6 @@ const Color cBorder = Color(0xFFE8E1D5);
 const String kBase = 'https://mithaqps.site.je';
 const String kChatUrl = '$kBase/wp-json/fllm/v1/chat';
 const String kHomeUrl = '$kBase/wp-json/mithaq/v1/home-data';
-const String kLoginUrl = '$kBase/wp-json/mithaq/v1/login';
-const String kTrialUrl = '$kBase/wp-json/mithaq/v1/trial';
 const String kJsonBase = '$kBase/wp-content/themes/mithaq-theme/inc/seed-json/';
 
 TextStyle amiri({double s = 22, Color c = cPrimary, FontWeight w = FontWeight.w700}) =>
@@ -42,29 +38,54 @@ TextStyle amiri({double s = 22, Color c = cPrimary, FontWeight w = FontWeight.w7
 TextStyle cairo({double s = 14, Color c = cText, FontWeight w = FontWeight.w500}) =>
     GoogleFonts.cairo(fontSize: s, color: c, fontWeight: w);
 
-// ============ دالة جلب البيانات (مصححة) ============
+// ============ دالة جلب البيانات (محصنة بسرقة الكوكيز) ============
 Future<dynamic> fetchJson(String url, {bool isPost = false, Map<String, dynamic>? body}) async {
   final client = HttpClient();
   client.badCertificateCallback = ((X509Certificate cert, String host, int port) => true);
+  
   try {
+    // 1. زيارة الموقع الرئيسي أولاً لسرقة الكوكيز (تخطي الحماية)
+    List<Cookie> stolenCookies = [];
+    try {
+      final homeRequest = await client.getUrl(Uri.parse(kBase));
+      homeRequest.headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      final homeResponse = await homeRequest.close();
+      stolenCookies = homeResponse.cookies;
+      await homeResponse.drain(); // إفراغ الذاكرة
+    } catch (_) {
+      // إذا فشل جلب الكوكيز، نكمل على أي حال
+    }
+
+    // 2. تجهيز الطلب الفعلي
     HttpClientRequest request;
     if (isPost) {
       request = await client.postUrl(Uri.parse(url));
       request.headers.contentType = ContentType.json;
-      request.headers.set('User-Agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36');
-      request.headers.set('Accept', 'application/json');
       request.write(jsonEncode(body));
     } else {
       request = await client.getUrl(Uri.parse(url));
-      request.headers.set('User-Agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36');
-      request.headers.set('Accept', 'application/json');
+    }
+
+    // إضافة الرؤوس المموهة
+    request.headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    request.headers.set('Accept', 'application/json, text/plain, */*');
+    request.headers.set('Origin', kBase);
+    request.headers.set('Referer', '$kBase/');
+
+    // إضافة الكوكيز المسروقة للتخطي
+    for (var cookie in stolenCookies) {
+      request.cookies.add(cookie);
     }
     
     final response = await request.close().timeout(const Duration(seconds: 30));
     final responseBody = await response.transform(utf8.decoder).join();
     
     if (response.statusCode == 200) {
-      return jsonDecode(responseBody);
+      try {
+        return jsonDecode(responseBody);
+      } catch (e) {
+        throw Exception('الحماية (InfinityFree) منعت الاتصال. (تم إرجاع HTML بدلاً من البيانات)');
+      }
     } else {
       try {
         final err = jsonDecode(responseBody);
@@ -95,183 +116,7 @@ class MithaqApp extends StatelessWidget {
       ),
       locale: const Locale('ar', 'PS'),
       builder: (context, child) => Directionality(textDirection: TextDirection.rtl, child: child ?? const SizedBox.shrink()),
-      home: initialLoggedIn ? const MainScreen() : const LoginScreen(),
-    );
-  }
-}
-
-// ==================== شاشة تسجيل الدخول ====================
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
-  @override
-  State<LoginScreen> createState() => _LoginScreenState();
-}
-
-class _LoginScreenState extends State<LoginScreen> {
-  final _userController = TextEditingController();
-  final _passController = TextEditingController();
-  bool isLoading = false;
-  bool isTrialLoading = false;
-  String? errorMsg;
-
-  Future<void> _login() async {
-    final user = _userController.text.trim();
-    final pass = _passController.text.trim();
-    if (user.isEmpty || pass.isEmpty) {
-      setState(() => errorMsg = 'يرجى إدخال اسم المستخدم وكلمة المرور');
-      return;
-    }
-
-    setState(() { isLoading = true; errorMsg = null; });
-
-    try {
-      final res = await fetchJson(kLoginUrl, isPost: true, body: {
-        'username': user,
-        'password': pass,
-      });
-
-      if (res['success'] == true) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('isLoggedIn', true);
-        await prefs.setString('userName', res['name'] ?? user);
-        await prefs.setInt('userId', res['user_id'] ?? 0);
-        
-        if (mounted) {
-          Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainScreen()));
-        }
-      } else {
-        setState(() => errorMsg = 'اسم المستخدم أو كلمة المرور غير صحيحة');
-      }
-    } catch (e) {
-      setState(() => errorMsg = e.toString().replaceAll('Exception: ', ''));
-    } finally {
-      if (mounted) setState(() => isLoading = false);
-    }
-  }
-
-  Future<void> _startTrial() async {
-    setState(() { isTrialLoading = true; errorMsg = null; });
-    try {
-      final res = await fetchJson(kTrialUrl, isPost: true, body: {});
-      
-      if (res['success'] == true) {
-        _userController.text = res['username'];
-        _passController.text = res['password'];
-        await _login();
-      } else {
-        setState(() => errorMsg = 'تعذر تفعيل التجربة المجانية');
-      }
-    } catch (e) {
-      setState(() => errorMsg = 'تعذر الاتصال بالخادم');
-    } finally {
-      if (mounted) setState(() => isTrialLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(30),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const SizedBox(height: 60),
-              const FaIcon(FontAwesomeIcons.scaleBalanced, size: 80, color: cPrimary),
-              const SizedBox(height: 20),
-              Text('مِيثَاق', style: amiri(s: 40)),
-              const SizedBox(height: 10),
-              Text('منصة المحامي الفلسطيني', style: cairo(s: 16, c: cTextSoft)),
-              const SizedBox(height: 40),
-              
-              if (errorMsg != null) ...[
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.red.shade200)),
-                  child: Text(errorMsg!, style: cairo(s: 14, c: Colors.red), textAlign: TextAlign.center),
-                ),
-                const SizedBox(height: 20),
-              ],
-
-              TextField(
-                controller: _userController,
-                decoration: InputDecoration(
-                  labelText: 'اسم المستخدم',
-                  labelStyle: cairo(s: 14, c: cTextSoft),
-                  filled: true,
-                  fillColor: Colors.white,
-                  prefixIcon: const Icon(Icons.person, color: cPrimary),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cBorder)),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cBorder)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cPrimary)),
-                ),
-              ),
-              const SizedBox(height: 15),
-              TextField(
-                controller: _passController,
-                obscureText: true,
-                decoration: InputDecoration(
-                  labelText: 'كلمة المرور',
-                  labelStyle: cairo(s: 14, c: cTextSoft),
-                  filled: true,
-                  fillColor: Colors.white,
-                  prefixIcon: const Icon(Icons.lock, color: cPrimary),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cBorder)),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cBorder)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: cPrimary)),
-                ),
-              ),
-              const SizedBox(height: 30),
-              
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: cPrimary,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                  ),
-                  onPressed: isLoading ? null : _login,
-                  child: isLoading 
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : Text('دخول', style: cairo(s: 16, c: Colors.white, w: FontWeight.bold)),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-              
-              Row(
-                children: [
-                  const Expanded(child: Divider(color: cBorder)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 15),
-                    child: Text('أو', style: cairo(s: 14, c: cTextSoft)),
-                  ),
-                  const Expanded(child: Divider(color: cBorder)),
-                ],
-              ),
-              
-              const SizedBox(height: 20),
-
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: cGold, width: 2),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                  ),
-                  onPressed: isTrialLoading ? null : _startTrial,
-                  child: isTrialLoading
-                    ? const CircularProgressIndicator(color: cGold)
-                    : Text('⭐ ابدأ تجربة محدودة — 30 يوم', style: cairo(s: 16, c: cPrimary, w: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      home: const MainScreen(),
     );
   }
 }
@@ -333,7 +178,7 @@ class HomeTab extends StatefulWidget {
 
 class _HomeTabState extends State<HomeTab> {
   Map<String, dynamic>? homeData;
-  String userName = 'المحامي';
+  String userName = 'زائر';
 
   @override
   void initState() {
@@ -342,8 +187,6 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() => userName = prefs.getString('userName') ?? 'المحامي');
     try {
       final res = await fetchJson(kHomeUrl);
       if (mounted) setState(() => homeData = res is Map ? Map<String, dynamic>.from(res) : {});
@@ -424,6 +267,7 @@ class _LibraryTabState extends State<LibraryTab> {
   String _currentType = 'laws.json';
   bool loading = true;
   List<dynamic> items = [];
+  String? errorMsg;
 
   final List<Map<String, String>> _categories = [
     {'type': 'laws.json', 'title': 'القوانين'},
@@ -446,7 +290,7 @@ class _LibraryTabState extends State<LibraryTab> {
   }
 
   Future<void> _loadData() async {
-    setState(() { loading = true; items = []; });
+    setState(() { loading = true; items = []; errorMsg = null; });
     try {
       if (_currentType == 'books') {
         final res = await fetchJson('$kBase/wp-json/wp/v2/legal_book?per_page=50');
@@ -466,7 +310,12 @@ class _LibraryTabState extends State<LibraryTab> {
         }
       }
     } catch (e) {
-      if (mounted) setState(() => loading = false);
+      if (mounted) {
+        setState(() {
+          errorMsg = e.toString().replaceAll('Exception: ', '');
+          loading = false;
+        });
+      }
     }
   }
 
@@ -525,34 +374,45 @@ class _LibraryTabState extends State<LibraryTab> {
           Expanded(
             child: loading
                 ? const Center(child: CircularProgressIndicator(color: cPrimary))
-                : items.isEmpty
-                    ? Center(child: Text('لا توجد بيانات حالياً', style: cairo(c: cTextSoft)))
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                        itemCount: items.length,
-                        itemBuilder: (context, index) {
-                          final item = items[index];
-                          final title = _getTitle(item);
-                          final content = _getContent(item);
+                : errorMsg != null
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Text(
+                            'تعذر تحميل البيانات.\n$errorMsg', 
+                            style: cairo(c: Colors.red), 
+                            textAlign: TextAlign.center
+                          ),
+                        ),
+                      )
+                    : items.isEmpty
+                        ? Center(child: Text('لا توجد بيانات حالياً', style: cairo(c: cTextSoft)))
+                        : ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            itemCount: items.length,
+                            itemBuilder: (context, index) {
+                              final item = items[index];
+                              final title = _getTitle(item);
+                              final content = _getContent(item);
 
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: cBorder)),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.all(15),
-                              title: Text(title, style: amiri(s: 16), maxLines: 2, overflow: TextOverflow.ellipsis),
-                              subtitle: content.isNotEmpty 
-                                  ? Padding(
-                                      padding: const EdgeInsets.only(top: 8),
-                                      child: Text(content.replaceAll(RegExp(r'<[^>]*>'), ''), style: cairo(s: 12, c: cTextSoft), maxLines: 2, overflow: TextOverflow.ellipsis),
-                                    )
-                                  : null,
-                              trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: cTextSoft),
-                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DetailScreen(title: title, content: content, isBook: _currentType == 'books'))),
-                            ),
-                          );
-                        },
-                      ),
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: cBorder)),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.all(15),
+                                  title: Text(title, style: amiri(s: 16), maxLines: 2, overflow: TextOverflow.ellipsis),
+                                  subtitle: content.isNotEmpty 
+                                      ? Padding(
+                                          padding: const EdgeInsets.only(top: 8),
+                                          child: Text(content.replaceAll(RegExp(r'<[^>]*>'), ''), style: cairo(s: 12, c: cTextSoft), maxLines: 2, overflow: TextOverflow.ellipsis),
+                                        )
+                                      : null,
+                                  trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: cTextSoft),
+                                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DetailScreen(title: title, content: content, isBook: _currentType == 'books'))),
+                                ),
+                              );
+                            },
+                          ),
           ),
         ],
       ),
@@ -622,6 +482,7 @@ class _ExamsTabState extends State<ExamsTab> {
   bool answered = false;
   String? selectedOption;
   bool examFinished = false;
+  String? errorMsg;
 
   @override
   void initState() {
@@ -630,7 +491,7 @@ class _ExamsTabState extends State<ExamsTab> {
   }
 
   Future<void> _fetchQuestions() async {
-    setState(() => loading = true);
+    setState(() { loading = true; errorMsg = null; });
     try {
       final res = await fetchJson('${kJsonBase}questions.json');
       if (mounted) {
@@ -639,8 +500,13 @@ class _ExamsTabState extends State<ExamsTab> {
           loading = false;
         });
       }
-    } catch (_) {
-      if (mounted) setState(() => loading = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          errorMsg = e.toString().replaceAll('Exception: ', '');
+          loading = false;
+        });
+      }
     }
   }
 
@@ -664,6 +530,7 @@ class _ExamsTabState extends State<ExamsTab> {
   @override
   Widget build(BuildContext context) {
     if (loading) return const Center(child: CircularProgressIndicator(color: cPrimary));
+    if (errorMsg != null) return Center(child: Padding(padding: const EdgeInsets.all(20), child: Text('تعذر تحميل الأسئلة.\n$errorMsg', style: cairo(c: Colors.red), textAlign: TextAlign.center)));
     if (questions.isEmpty) return Center(child: Text('لا توجد أسئلة متاحة حالياً', style: cairo()));
 
     if (examFinished) {
@@ -766,7 +633,7 @@ class _ChatTabState extends State<ChatTab> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() { messages.add({'text': 'تعذر الاتصال بالخادم. تأكد من صلاحية الإنترنت.', 'isUser': false}); sending = false; });
+        setState(() { messages.add({'text': 'تعذر الاتصال بالخادم. (حماية InfinityFree تمنع الشات)', 'isUser': false}); sending = false; });
       }
     }
     _scrollToBottom();
@@ -872,27 +739,6 @@ class ProfileTab extends StatefulWidget {
 }
 
 class _ProfileTabState extends State<ProfileTab> {
-  String userName = 'المحامي المتدرب';
-
-  @override
-  void initState() {
-    super.initState();
-    _loadName();
-  }
-
-  Future<void> _loadName() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() => userName = prefs.getString('userName') ?? 'المحامي المتدرب');
-  }
-
-  Future<void> _logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isLoggedIn', false);
-    if (mounted) {
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -905,9 +751,9 @@ class _ProfileTabState extends State<ProfileTab> {
               children: [
                 const CircleAvatar(radius: 40, backgroundColor: cBgAlt, child: Icon(Icons.person, size: 40, color: cPrimary)),
                 const SizedBox(height: 15),
-                Text(userName, style: amiri(s: 22)),
+                Text('زائر (تخطي مؤقت)', style: amiri(s: 22)),
                 const SizedBox(height: 5),
-                Text('عضو مسجل', style: cairo(s: 14, c: cTextSoft)),
+                Text('يرجى ترقية الاستضافة لتفعيل الحساب', style: cairo(s: 14, c: cTextSoft)),
               ],
             ),
           ),
@@ -916,12 +762,6 @@ class _ProfileTabState extends State<ProfileTab> {
           _buildTile(Icons.info_outline, 'عن ميثاق', () => _showDialog(context, 'عن ميثاق', 'منصة المحامي الفلسطيني — رحلتك تبدأ من هنا.')),
           _buildTile(Icons.developer_mode, 'المطور', () => _showDialog(context, 'المطور', 'المحامي أسعد محمد بدوي\nsmilestranger2@gmail.com')),
           _buildTile(Icons.privacy_tip_outlined, 'إخلاء المسؤولية', () => _showDialog(context, 'إخلاء المسؤولية', 'المنصة لأغراض تعليمية فقط، ولا تعتبر استشارة قانونية.')),
-          const SizedBox(height: 20),
-          ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
-            title: Text('تسجيل الخروج', style: cairo(s: 16, c: Colors.red)),
-            onTap: _logout,
-          ),
         ],
       ),
     );
