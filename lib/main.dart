@@ -34,6 +34,7 @@ const String kBase = 'https://mithaqps.site.je';
 const String kChatUrl = '$kBase/wp-json/fllm/v1/chat';
 const String kHomeUrl = '$kBase/wp-json/mithaq/v1/home-data';
 const String kLoginUrl = '$kBase/wp-json/mithaq/v1/login';
+const String kTrialUrl = '$kBase/wp-json/mithaq/v1/trial';
 const String kJsonBase = '$kBase/wp-content/themes/mithaq-theme/inc/seed-json/';
 
 TextStyle amiri({double s = 22, Color c = cPrimary, FontWeight w = FontWeight.w700}) =>
@@ -41,7 +42,7 @@ TextStyle amiri({double s = 22, Color c = cPrimary, FontWeight w = FontWeight.w7
 TextStyle cairo({double s = 14, Color c = cText, FontWeight w = FontWeight.w500}) =>
     GoogleFonts.cairo(fontSize: s, color: c, fontWeight: w);
 
-// ============ دالة جلب البيانات ============
+// ============ دالة جلب البيانات (مصححة) ============
 Future<dynamic> fetchJson(String url, {bool isPost = false, Map<String, dynamic>? body}) async {
   final client = HttpClient();
   client.badCertificateCallback = ((X509Certificate cert, String host, int port) => true);
@@ -50,12 +51,15 @@ Future<dynamic> fetchJson(String url, {bool isPost = false, Map<String, dynamic>
     if (isPost) {
       request = await client.postUrl(Uri.parse(url));
       request.headers.contentType = ContentType.json;
+      request.headers.set('User-Agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36');
+      request.headers.set('Accept', 'application/json');
       request.write(jsonEncode(body));
     } else {
       request = await client.getUrl(Uri.parse(url));
+      request.headers.set('User-Agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36');
+      request.headers.set('Accept', 'application/json');
     }
-    request.headers.set('User-Agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36');
-    request.headers.set('Accept', 'application/json');
+    
     final response = await request.close().timeout(const Duration(seconds: 30));
     final responseBody = await response.transform(utf8.decoder).join();
     
@@ -107,6 +111,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _userController = TextEditingController();
   final _passController = TextEditingController();
   bool isLoading = false;
+  bool isTrialLoading = false;
   String? errorMsg;
 
   Future<void> _login() async {
@@ -144,6 +149,25 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _startTrial() async {
+    setState(() { isTrialLoading = true; errorMsg = null; });
+    try {
+      final res = await fetchJson(kTrialUrl, isPost: true, body: {});
+      
+      if (res['success'] == true) {
+        _userController.text = res['username'];
+        _passController.text = res['password'];
+        await _login();
+      } else {
+        setState(() => errorMsg = 'تعذر تفعيل التجربة المجانية');
+      }
+    } catch (e) {
+      setState(() => errorMsg = 'تعذر الاتصال بالخادم');
+    } finally {
+      if (mounted) setState(() => isTrialLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -165,7 +189,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.red.shade200)),
-                  child: Text(errorMsg!, style: cairo(s: 14, c: Colors.red)),
+                  child: Text(errorMsg!, style: cairo(s: 14, c: Colors.red), textAlign: TextAlign.center),
                 ),
                 const SizedBox(height: 20),
               ],
@@ -212,6 +236,36 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: isLoading 
                     ? const CircularProgressIndicator(color: Colors.white)
                     : Text('دخول', style: cairo(s: 16, c: Colors.white, w: FontWeight.bold)),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+              
+              Row(
+                children: [
+                  const Expanded(child: Divider(color: cBorder)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 15),
+                    child: Text('أو', style: cairo(s: 14, c: cTextSoft)),
+                  ),
+                  const Expanded(child: Divider(color: cBorder)),
+                ],
+              ),
+              
+              const SizedBox(height: 20),
+
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: cGold, width: 2),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                  ),
+                  onPressed: isTrialLoading ? null : _startTrial,
+                  child: isTrialLoading
+                    ? const CircularProgressIndicator(color: cGold)
+                    : Text('⭐ ابدأ تجربة محدودة — 30 يوم', style: cairo(s: 16, c: cPrimary, w: FontWeight.bold)),
                 ),
               ),
             ],
@@ -292,7 +346,6 @@ class _HomeTabState extends State<HomeTab> {
     setState(() => userName = prefs.getString('userName') ?? 'المحامي');
     try {
       final res = await fetchJson(kHomeUrl);
-      // ✅ تم إصلاح السطر ده
       if (mounted) setState(() => homeData = res is Map ? Map<String, dynamic>.from(res) : {});
     } catch (_) {}
   }
@@ -579,7 +632,6 @@ class _ExamsTabState extends State<ExamsTab> {
   Future<void> _fetchQuestions() async {
     setState(() => loading = true);
     try {
-      // ✅ تم إصلاح السطر ده
       final res = await fetchJson('${kJsonBase}questions.json');
       if (mounted) {
         setState(() {
