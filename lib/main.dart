@@ -136,8 +136,10 @@ class UnderConstructionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Center(
+    return Scaffold(
+      backgroundColor: cBg,
+      appBar: AppBar(title: Text(title, style: amiri(s: 18)), backgroundColor: cBg, iconTheme: const IconThemeData(color: cPrimary)),
+      body: Center(
         child: Padding(
           padding: const EdgeInsets.all(30),
           child: Column(
@@ -281,9 +283,9 @@ class HomeTab extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                Expanded(child: _buildQuickAction(Icons.menu_book, 'المكتبة', () => _push(context, const LibraryTab()))),
+                Expanded(child: _buildQuickAction(context, Icons.menu_book, 'المكتبة', () => _push(context, const LibraryTab()))),
                 const SizedBox(width: 15),
-                Expanded(child: _buildQuickAction(Icons.assignment, 'الاختبارات', () => _push(context, const ExamsTab()))),
+                Expanded(child: _buildQuickAction(context, Icons.assignment, 'الاختبارات', () => _push(context, const ExamsTab()))),
               ],
             ),
           ),
@@ -299,11 +301,11 @@ class HomeTab extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                Expanded(child: _buildToolCard(FontAwesomeIcons.gavel, 'سوابق قضائية', () => _push(context, const CaseSimulatorScreen()))),
+                Expanded(child: _buildToolCard(context, FontAwesomeIcons.gavel, 'سوابق قضائية', () => _push(context, const CaseSimulatorScreen()))),
                 const SizedBox(width: 10),
-                Expanded(child: _buildToolCard(FontAwesomeIcons.calculator, 'حاسبة المواعيد', () => _soon(context, 'الحاسبة'))),
+                Expanded(child: _buildToolCard(context, FontAwesomeIcons.calculator, 'حاسبة المواعيد', () => _soon(context, 'الحاسبة'))),
                 const SizedBox(width: 10),
-                Expanded(child: _buildToolCard(FontAwesomeIcons.arrowsRotate, 'التحديثات', () => _soon(context, 'التحديثات'))),
+                Expanded(child: _buildToolCard(context, FontAwesomeIcons.arrowsRotate, 'التحديثات', () => _soon(context, 'التحديثات'))),
               ],
             ),
           ),
@@ -357,14 +359,15 @@ class HomeTab extends StatelessWidget {
               crossAxisSpacing: 10,
               childAspectRatio: 3.2,
               children: [
-                _buildBrowseCard(FontAwesomeIcons.book, 'الكتب القانونية', () => _push(context, const UnderConstructionScreen(title: 'الكتب القانونية', icon: Icons.menu_book))),
-                _buildBrowseCard(FontAwesomeIcons.download, 'تحميل القوانين'),
-                _buildBrowseCard(FontAwesomeIcons.landmark, 'المحاكم'),
-                _buildBrowseCard(FontAwesomeIcons.magnifyingGlass, 'البحث القانوني'),
-                _buildBrowseCard(FontAwesomeIcons.bullhorn, 'التحديثات'),
-                _buildBrowseCard(FontAwesomeIcons.penNib, 'الأسئلة التحريرية'),
-                _buildBrowseCard(FontAwesomeIcons.microphoneLines, 'الأسئلة الشفوية'),
-                _buildBrowseCard(FontAwesomeIcons.userGraduate, 'دليل المتدرب'),
+                // ✅ تم إصلاح الخطأ هنا بتمرير context للدالة
+                _buildBrowseCard(context, FontAwesomeIcons.book, 'الكتب القانونية', () => _push(context, const UnderConstructionScreen(title: 'الكتب القانونية', icon: Icons.menu_book))),
+                _buildBrowseCard(context, FontAwesomeIcons.download, 'تحميل القوانين'),
+                _buildBrowseCard(context, FontAwesomeIcons.landmark, 'المحاكم'),
+                _buildBrowseCard(context, FontAwesomeIcons.magnifyingGlass, 'البحث القانوني'),
+                _buildBrowseCard(context, FontAwesomeIcons.bullhorn, 'التحديثات'),
+                _buildBrowseCard(context, FontAwesomeIcons.penNib, 'الأسئلة التحريرية'),
+                _buildBrowseCard(context, FontAwesomeIcons.microphoneLines, 'الأسئلة الشفوية'),
+                _buildBrowseCard(context, FontAwesomeIcons.userGraduate, 'دليل المتدرب'),
               ],
             ),
           ),
@@ -416,7 +419,7 @@ class HomeTab extends StatelessWidget {
     return Column(children: [Text(num, style: amiri(s: 24, c: cPrimary)), Text(label, style: cairo(s: 12, c: cTextSoft))]);
   }
 
-  Widget _buildQuickAction(IconData icon, String title, VoidCallback onTap) {
+  Widget _buildQuickAction(BuildContext context, IconData icon, String title, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -433,7 +436,7 @@ class HomeTab extends StatelessWidget {
     );
   }
 
-  Widget _buildToolCard(IconData icon, String title, VoidCallback onTap) {
+  Widget _buildToolCard(BuildContext context, IconData icon, String title, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -469,7 +472,8 @@ class HomeTab extends StatelessWidget {
     );
   }
 
-  Widget _buildBrowseCard(IconData icon, String title, [VoidCallback? onTap]) {
+  // ✅ تم إضافة BuildContext هنا
+  Widget _buildBrowseCard(BuildContext context, IconData icon, String title, [VoidCallback? onTap]) {
     return GestureDetector(
       onTap: onTap ?? () => _soon(context, title),
       child: Container(
