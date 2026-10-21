@@ -38,10 +38,9 @@ jobs:
         run: |
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
 
-      - name: Add App Logo (الشعار الرسمي)
+      # ✨ تم حذف أمر تحميل الصورة الغلط من هنا ✨
+      - name: Generate App Icons from Uploaded Logo
         run: |
-          mkdir -p assets
-          curl -L -o assets/icon.png "https://cdn-icons-png.flaticon.com/512/1048/1048953.png"
           dart run flutter_launcher_icons
 
       - name: Generate Keystore
